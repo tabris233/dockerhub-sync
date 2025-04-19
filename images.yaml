@@ -2,8 +2,8 @@ images:
   - source: 0nlylty/dockercopilot:UGREEN
     target: dockercopilot-ugreen:latest
 
-  # - source: nginx:alpine
-  #   target: nginx-alpine:latest
+  - source: portainer/portainer-ce:latest
+    target: portainer-ce:latest
 
-  # - source: redis:latest
-  #   target: redis:latest
+  - source: jxxghp/moviepilot-v2:latest
+    target: moviepilot-v2:latest
