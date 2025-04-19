@@ -1,0 +1,9 @@
+images:
+  - source: 0nlylty/dockercopilot:UGREEN
+    target: dockercopilot-ugreen:latest
+
+  # - source: nginx:alpine
+  #   target: nginx-alpine:latest
+
+  # - source: redis:latest
+  #   target: redis:latest

@@ -1,0 +1,34 @@
+name: Sync DockerHub Images to GHCR
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: sudo apt-get install -y yq
+
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Read and Sync Images
+        run: |
+          COUNT=$(yq '.images | length' images.yaml)
+          for i in $(seq 0 $((COUNT - 1))); do
+            SRC=$(yq -r ".images[$i].source" images.yaml)
+            DST=$(yq -r ".images[$i].target" images.yaml)
+            echo "🔄 Syncing $SRC → $DST"
+            docker pull $SRC
+            docker tag $SRC ghcr.io/${{ github.repository_owner }}/$DST
+            docker push ghcr.io/${{ github.repository_owner }}/$DST
+          done
