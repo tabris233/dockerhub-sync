@@ -14,12 +14,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install yq
-        run: sudo apt-get update && sudo apt-get install -y yq
+        run: sudo wget -O /usr/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 && sudo chmod +x /usr/bin/yq
 
       - name: Set up matrix
         id: set-matrix
         run: |
-          IMAGES=$(yq -o=json '.images' images.yaml)
+          IMAGES=$(yq e -o=json '.images' images.yaml)
           echo "matrix=$IMAGES" >> $GITHUB_OUTPUT
 
   sync:
