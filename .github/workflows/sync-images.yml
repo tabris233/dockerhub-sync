@@ -67,11 +67,13 @@ jobs:
           docker pull $SRC
           docker tag $SRC $GHCR_IMAGE
           docker push $GHCR_IMAGE
+
+          USERNAME=${{ github.repository_owner }}
           PACKAGE_NAME=$(echo $DST | cut -d':' -f1)
 
-          echo "🌟 Setting ghcr.io/${{ github.repository_owner }}/$PACKAGE_NAME public"
+          echo "🌟 Setting ghcr.io/$USERNAME/$PACKAGE_NAME public"
           curl -X PATCH \
             -H "Authorization: Bearer ${{ secrets.GHCR_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/user/packages/container/$PACKAGE_NAME \
+            https://api.github.com/users/$USERNAME/packages/container/$PACKAGE_NAME \
             -d '{"visibility":"public"}'
