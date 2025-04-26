@@ -55,11 +55,12 @@ jobs:
           DST=${{ matrix.image.target }}
 
           echo "🔍 Checking $SRC → $DST"
-          DOCKERHUB_DIGEST=$(skopeo inspect docker://$SRC | jq -r '.Digest')
+          DOCKERHUB_CREATED=$(skopeo inspect docker://$SRC | jq -r '.Created')
           GHCR_IMAGE=ghcr.io/${{ github.repository_owner }}/$DST
-          GHCR_DIGEST=$(skopeo inspect docker://$GHCR_IMAGE 2>/dev/null | jq -r '.Digest')
-          if [ "$DOCKERHUB_DIGEST" = "$GHCR_DIGEST" ]; then
-            echo "✅ $SRC and $GHCR_IMAGE are identical. Skipping sync."
+          GHCR_CREATED=$(skopeo inspect docker://$GHCR_IMAGE 2>/dev/null | jq -r '.Created')
+
+          if [ "$DOCKERHUB_CREATED" = "$GHCR_CREATED" ]; then
+            echo "✅ $SRC and $GHCR_IMAGE are identical (based on Created time). Skipping sync."
             exit 0
           fi
 
