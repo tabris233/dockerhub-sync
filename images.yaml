@@ -7,3 +7,30 @@ images:
 
   - source: jxxghp/moviepilot-v2:latest
     target: moviepilot-v2:latest
+
+  - source: gdy666/lucky:latest
+    target: lucky:latest
+
+  - source: allanpk716/chinesesubfinder:latest
+    target: chinesesubfinder:latest
+
+  - source: louislam/dockge:1
+    target: dockge:latest
+
+  - source: p3terx/ariang:latest
+    target: ariang:latest
+
+  - source: iyuucn/iyuuplus:latest
+    target: iyuuplus:latest
+
+  - source: tecnativa/docker-socket-proxy:latest
+    target: docker-socket-proxy:latest
+
+  - source: xhofe/alist:latest
+    target: alist:latest
+
+  - source: nyanmisaka/jellyfin:latest
+    target: jellyfin:latest
+
+  - source: hectorqin/reader
+    target: reader:latest
