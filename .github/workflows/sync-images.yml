@@ -8,12 +8,18 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      max-parallel: 3
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install yq
-        run: sudo apt-get install -y yq
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y yq jq curl skopeo
 
       - name: Log in to Docker Hub
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
@@ -27,8 +33,33 @@ jobs:
           for i in $(seq 0 $((COUNT - 1))); do
             SRC=$(yq -r ".images[$i].source" images.yaml)
             DST=$(yq -r ".images[$i].target" images.yaml)
-            echo "🔄 Syncing $SRC → $DST"
-            docker pull $SRC
-            docker tag $SRC ghcr.io/${{ github.repository_owner }}/$DST
-            docker push ghcr.io/${{ github.repository_owner }}/$DST
+            echo "🔍 Checking $SRC → $DST"
+
+            # 获取 Docker Hub 镜像 Digest
+            DOCKERHUB_DIGEST=$(skopeo inspect docker://$SRC | jq -r '.Digest')
+
+            # 获取 GHCR 镜像 Digest
+            GHCR_IMAGE=ghcr.io/${{ github.repository_owner }}/$DST
+            GHCR_DIGEST=$(skopeo inspect docker://$GHCR_IMAGE 2>/dev/null | jq -r '.Digest')
+
+            if [ "$DOCKERHUB_DIGEST" = "$GHCR_DIGEST" ]; then
+              echo "✅ $SRC and $GHCR_IMAGE are identical. Skipping sync."
+              continue
+            else
+              echo "♻️ $SRC and $GHCR_IMAGE differ. Syncing..."
+
+              docker pull $SRC
+              docker tag $SRC $GHCR_IMAGE
+              docker push $GHCR_IMAGE
+
+              # 自动公开设置
+              PACKAGE_NAME=$(echo $DST | cut -d':' -f1)
+              echo "🌟 Setting ghcr.io/${{ github.repository_owner }}/$PACKAGE_NAME public"
+
+              curl -X PATCH \
+                -H "Authorization: Bearer ${{ secrets.GHCR_TOKEN }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                https://api.github.com/user/packages/container/$PACKAGE_NAME \
+                -d '{"visibility":"public"}'
+            fi
           done
