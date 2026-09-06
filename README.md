@@ -1,7 +1,7 @@
 # DockerHub to GHCR Sync
 
 自动同步多个 Docker Hub 镜像到 GitHub Container Registry（GHCR）。工作流会保留多架构
-manifest（例如 `amd64`、`arm64`），并将同步后的包设为公开。
+manifest（例如 `amd64`、`arm64`）。
 
 ## 使用说明
 
@@ -33,4 +33,5 @@ manifest（例如 `amd64`、`arm64`），并将同步后的包设为公开。
 ## 安全说明
 
 - 不要将令牌写入脚本或提交到仓库。用于本地调试的 `ghcr.sh` 已被 Git 忽略，并只从环境变量读取令牌。
-- 所有 GHCR 包会被设为公开；如需私有镜像，请使用独立仓库或调整工作流中的可见性步骤。
+- 包可见性由 GHCR 的 Package settings 管理。已有镜像会保持现有可见性；新包通过
+  `GITHUB_TOKEN` 创建时会继承仓库的可见性设置。

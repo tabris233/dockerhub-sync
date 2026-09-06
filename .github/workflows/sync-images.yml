@@ -60,7 +60,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y curl jq skopeo
+          sudo apt-get install --no-install-recommends -y skopeo
 
       - name: Log in to Docker Hub
         env:
@@ -77,11 +77,10 @@ jobs:
           set -Eeuo pipefail
           printf '%s' "$GHCR_TOKEN" | skopeo login ghcr.io --username "${{ github.actor }}" --password-stdin
 
-      - name: Mirror image and set visibility
+      - name: Mirror image
         env:
           SRC: ${{ matrix.image.source }}
           DST: ${{ matrix.image.target }}
-          GHCR_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
         run: |
           set -Eeuo pipefail
@@ -95,26 +94,3 @@ jobs:
             echo "♻️ Mirroring $SRC → $ghcr_image"
             skopeo copy --all --preserve-digests --retry-times 3 "docker://$SRC" "docker://$ghcr_image"
           fi
-
-          package_name="${DST%%:*}"
-          package_name_encoded="$(jq -rn --arg value "$package_name" '$value | @uri')"
-          owner_type="$(curl --fail --silent --show-error --retry 3 --retry-all-errors \
-            -H "Authorization: Bearer $GHCR_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "$GITHUB_API_URL/users/$OWNER" | jq -er '.type')"
-
-          case "$owner_type" in
-            User) package_url="$GITHUB_API_URL/users/$OWNER/packages/container/$package_name_encoded" ;;
-            Organization) package_url="$GITHUB_API_URL/orgs/$OWNER/packages/container/$package_name_encoded" ;;
-            *) echo "Unsupported package owner type: $owner_type" >&2; exit 1 ;;
-          esac
-
-          echo "🌟 Ensuring $ghcr_image is public"
-          curl --fail --silent --show-error --retry 3 --retry-all-errors --request PATCH \
-            -H "Authorization: Bearer $GHCR_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "Content-Type: application/json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "$package_url" \
-            --data '{"visibility":"public"}'
