@@ -2,79 +2,119 @@ name: Sync DockerHub Images to GHCR
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    # Avoid the top of the hour, when scheduled workflows are more likely to be delayed.
+    - cron: '17 */6 * * *'
   workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: dockerhub-to-ghcr-sync
+  cancel-in-progress: false
 
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install tools
         run: |
-          sudo apt-get update && sudo apt-get install -y jq curl
-          curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o yq
-          chmod +x yq
-          sudo mv yq /usr/local/bin/yq
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y jq yq
 
-      - name: Set up matrix
+      - name: Validate configuration and set matrix
         id: set-matrix
+        shell: bash
         run: |
-          RAW=$(yq e -o=json '.images' images.yaml)
-          MATRIX=$(echo "$RAW" | jq -c '.')
-          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          set -Eeuo pipefail
+          matrix="$(yq -c '.images' images.yaml)"
+
+          jq -e '
+            (type == "array" and length > 0) and
+            (length as $count | [.[].target] | unique | length == $count) and
+            all(.[];
+              (.source | type == "string" and length > 0) and
+              (.target | type == "string" and test("^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*$"))
+            )
+          ' <<< "$matrix" > /dev/null
+
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   sync:
     needs: prepare
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
     strategy:
+      fail-fast: false
       matrix:
         image: ${{ fromJson(needs.prepare.outputs.matrix) }}
       max-parallel: 3
 
     steps:
-      - uses: actions/checkout@v4
-
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y yq jq curl skopeo
+          sudo apt-get install --no-install-recommends -y curl jq skopeo
 
       - name: Log in to Docker Hub
-        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$DOCKERHUB_TOKEN" | skopeo login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin
 
       - name: Log in to GHCR
-        run: echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Sync Single Image
+        env:
+          GHCR_TOKEN: ${{ github.token }}
         run: |
-          SRC=${{ matrix.image.source }}
-          DST=${{ matrix.image.target }}
+          set -Eeuo pipefail
+          printf '%s' "$GHCR_TOKEN" | skopeo login ghcr.io --username "${{ github.actor }}" --password-stdin
 
-          echo "🔍 Checking $SRC → $DST"
-          DOCKERHUB_CREATED=$(skopeo inspect docker://$SRC | jq -r '.Created')
-          GHCR_IMAGE=ghcr.io/${{ github.repository_owner }}/$DST
-          GHCR_CREATED=$(skopeo inspect docker://$GHCR_IMAGE 2>/dev/null | jq -r '.Created')
+      - name: Mirror image and set visibility
+        env:
+          SRC: ${{ matrix.image.source }}
+          DST: ${{ matrix.image.target }}
+          GHCR_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -Eeuo pipefail
+          ghcr_image="ghcr.io/$OWNER/$DST"
+          source_digest="$(skopeo inspect --format '{{.Digest}}' "docker://$SRC")"
+          destination_digest=""
 
-          if [ "$DOCKERHUB_CREATED" = "$GHCR_CREATED" ]; then
-            echo "✅ $SRC and $GHCR_IMAGE are identical (based on Created time). Skipping sync."
-            exit 0
+          if destination_digest="$(skopeo inspect --format '{{.Digest}}' "docker://$ghcr_image" 2>/dev/null)" && [[ "$source_digest" == "$destination_digest" ]]; then
+            echo "✅ $SRC and $ghcr_image already match at $source_digest"
+          else
+            echo "♻️ Mirroring $SRC → $ghcr_image"
+            skopeo copy --all --preserve-digests --retry-times 3 "docker://$SRC" "docker://$ghcr_image"
           fi
 
-          echo "♻️ $SRC and $GHCR_IMAGE differ. Syncing..."
-          docker pull $SRC
-          docker tag $SRC $GHCR_IMAGE
-          docker push $GHCR_IMAGE
+          package_name="${DST%%:*}"
+          package_name_encoded="$(jq -rn --arg value "$package_name" '$value | @uri')"
+          owner_type="$(curl --fail --silent --show-error --retry 3 --retry-all-errors \
+            -H "Authorization: Bearer $GHCR_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/users/$OWNER" | jq -er '.type')"
 
-          USERNAME=${{ github.repository_owner }}
-          PACKAGE_NAME=$(echo $DST | cut -d':' -f1)
+          case "$owner_type" in
+            User) package_url="$GITHUB_API_URL/users/$OWNER/packages/container/$package_name_encoded" ;;
+            Organization) package_url="$GITHUB_API_URL/orgs/$OWNER/packages/container/$package_name_encoded" ;;
+            *) echo "Unsupported package owner type: $owner_type" >&2; exit 1 ;;
+          esac
 
-          echo "🌟 Setting ghcr.io/$USERNAME/$PACKAGE_NAME public"
-          curl -X PATCH \
-            -H "Authorization: Bearer ${{ secrets.GHCR_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/users/$USERNAME/packages/container/$PACKAGE_NAME \
-            -d '{"visibility":"public"}'
+          echo "🌟 Ensuring $ghcr_image is public"
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --request PATCH \
+            -H "Authorization: Bearer $GHCR_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$package_url" \
+            --data '{"visibility":"public"}'

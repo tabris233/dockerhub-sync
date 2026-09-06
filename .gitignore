@@ -1,0 +1,5 @@
+# Local debugging helpers and credentials
+ghcr.sh
+.env
+.env.*
+!.env.example
